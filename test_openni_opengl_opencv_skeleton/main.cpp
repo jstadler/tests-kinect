@@ -48,6 +48,10 @@ xn::ImageGenerator g_ImageGenerator;
 xn::UserGenerator g_UserGenerator;
 xn::Player g_Player;
 
+xn::SceneMetaData sceneMD;
+xn::DepthMetaData depthMD;
+xn::ImageMetaData imageMD;
+
 XnStatus rc;
 
 XnBool g_bNeedPose = FALSE;
@@ -67,6 +71,25 @@ cv::Mat m_user16u( 480, 640, CV_16UC1);
 cv::Mat m_bg16u( 480, 640, CV_16UC1);
 cv::Mat mask;
 cv::Mat imageShow(480, 640, CV_8UC1);
+cv::Mat m_rgb8u( 480, 640, CV_8UC3 );
+cv::Mat all0_3(480, 640, CV_8UC3, cv::Scalar(0,0,0));
+cv::Mat all0_1(480, 640, CV_8UC1, cv::Scalar(0,0,0));
+cv::Mat all1_1(480, 640, CV_8UC1, cv::Scalar(1,1,1));
+cv::Mat all255_1(480, 640, CV_8UC1, cv::Scalar(255,255,255));
+cv::Mat m_bgr( 480, 640, CV_8UC3 );
+cv::Mat m_personBGR( 480, 640, CV_8UC3 );
+cv::Mat m_bgBGR( 480, 640, CV_8UC3 );
+cv::Mat m_bgBGR_static( 480, 640, CV_8UC3 );
+cv::Mat canvas( 470, 940, CV_8UC3 );
+
+cv::Mat all1_16u(480, 640, CV_16UC1, cv::Scalar(1));
+cv::Mat all20_16u(480, 640, CV_16UC1, cv::Scalar(20));
+
+int other_users(0); // option to show other users
+int shadows(0); // option to show other users shadows, default is no
+int numOfUsers(0); // keeps track of the numbe rof users in the system
+int backgrounds(1); // show backgrounds in user images
+int print_frames(0);
 
 #ifndef USE_GLES
 #if (XN_PLATFORM == XN_PLATFORM_MACOSX)
@@ -225,6 +248,8 @@ void LoadCalibration()
 // this function is called each frame
 void glutDisplay (void)
 {
+	canvas = cv::Mat( 470, 940, CV_8UC3, cv::Scalar(0, 0, 0) );
+	m_bgr = cv::Mat(480, 640, CV_8UC3, cv::Scalar(0,0,0));
 	glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 	// Setup the OpenGL viewpoint
@@ -232,11 +257,9 @@ void glutDisplay (void)
 	glPushMatrix();
 	glLoadIdentity();
 
-	int numOfUsers(0);
+	
 	//printf("about to fail\n");
-	xn::SceneMetaData sceneMD;
-	xn::DepthMetaData depthMD;
-	xn::ImageMetaData imageMD;
+	
 	g_DepthGenerator.GetMetaData(depthMD);
 	
 #ifndef USE_GLES
@@ -268,48 +291,95 @@ void glutDisplay (void)
         }
 
 		g_ImageGenerator.GetMetaData( imageMD );
-		cv::Mat  m_rgb8u( 480, 640, CV_8UC3 );
-		cv::Mat all0(480, 640, CV_8UC3, cv::Scalar(0,0,0));
 		memcpy( m_rgb8u.data, imageMD.Data(), 640*480*3 );
-		cv::Mat  m_bgr( 480, 640, CV_8UC3 );
+		// makes the bgr image
 		cvtColor( m_rgb8u, m_bgr, CV_RGB2BGR );
-		cv::imshow("BGR", m_bgr);
-		cv::Mat m_personBGR( 480, 640, CV_8UC3 );
-		cv::Mat m_bgBGR( 480, 640, CV_8UC3 );
-		
-		// probably not needed
-		//cv::Mat m_extraBGR( 480, 640, CV_8UC3 );
+		// shows the BGR image
+		//m_bgr = cv::Mat(m_bgr, cv::Rect(40,40,600,440));
+		cv::imshow("(a) BGR", m_bgr);
+
+		if(print_frames==1){
+			cv::imwrite("bgr.png", m_bgr);
+		}
+
 		
 
 		// generates a grid with values per pixel belonging to a user, 0 is no user
 		g_UserGenerator.GetUserPixels(0, sceneMD);
-
-		//printf("blah\n");
-		
+	
 		// get BG
 		memcpy( m_bg16u.data, sceneMD.Data(), 640*480*2 );
-		imageShow = m_bg16u;
-		//cv::imshow( "m_bg16u", m_bg16u );
-		cv::inRange(m_bg16u, userValues[0], userValues[0], mask);
-		//cv::imshow( "bg", mask ); // shows bg mask
-		m_bgBGR = all0;
-		m_bgr.copyTo(m_bgBGR, mask);
-		cv::imshow( "bg", m_bgBGR );
+		
+
 		char name[10];
 		numOfUsers = ( numOfUsers > g_UserGenerator.GetNumberOfUsers() )  ? numOfUsers : g_UserGenerator.GetNumberOfUsers() ;
-		//printf("users: %d\n", numOfUsers);
-		for(int i = 1; i <= numOfUsers; i++) {
-			printf("user%d\n",i);
-			m_personBGR = all0;
-			cv::inRange(m_bg16u, userValues[i], userValues[i], mask);
-			sprintf( name, "person%d\n", i);
-			m_bgr.copyTo(m_personBGR, mask);
-			//m_personBGR = m_personBGR + m_bgBGR;
-			cv::imshow( name, m_personBGR );
+
+		if (g_UserGenerator.GetNumberOfUsers() > 0) {
+			mask = cv::Mat(480, 640, CV_8UC1, cv::Scalar(0));
+			cv::inRange(m_bg16u, all1_16u, all20_16u, mask);
+			//mask = cv::Mat(mask, cv::Rect(40,40,600,440));
+			cv:imshow("(b) all users mask", mask);
+			if(print_frames==1){
+				cv::imwrite("all_users_mask.png", mask);
+			}
 		}
+
+		m_personBGR = cv::Mat(480, 640, CV_8UC3, cv::Scalar(0,0,0));
+		m_bgBGR_static.copyTo(m_personBGR);
+		m_personBGR.setTo(cv::Scalar(0,0,0), mask);
+		//m_personBGR = cv::Mat(m_personBGR, cv::Rect(40,40,600,440));
+
+		//Mat img(Size(320,240),CV_8UC3);
+		// select a ROI
+		//cv::Mat roi(canvas, cv::Rect(630,10,300,220));
+		//m_personBGR.copyTo(canvas.operator()(cv::Rect(630,10,300,220)));
+		//canvas(cv::Rect(630,10,300,220)) = m_personBGR(cv::Rect(40,40,300,220));
+		//cv::imshow("canvas test", canvas );
+
+		cv::imshow("(c) no users in background", m_personBGR );
+		if(print_frames==1){
+			cv::imwrite("no_users_bg.png", m_personBGR);
+		}
+
+		
+		for(int i = 1; i <= numOfUsers; i++) {
+			printf("displaying %d of %d\n", i, numOfUsers);
+			m_personBGR = cv::Mat(480, 640, CV_8UC3, cv::Scalar(0,0,0));
+			mask = cv::Mat(480, 640, CV_8UC1, cv::Scalar(0));
+			cv::inRange(m_bg16u, userValues[i], userValues[i], mask);
+			
+			sprintf( name, "user%d\n", i);
+			if(backgrounds){
+				m_bgBGR_static.copyTo(m_personBGR);
+			}
+
+			m_personBGR.setTo(cv::Scalar(0,0,0), mask);
+			m_bgr.copyTo(m_personBGR, mask);
+			
+			// mask all other users (TODO : optional)
+			if(shadows) {
+				for(int j = 1; j <= numOfUsers; j++) {
+					if(j != i) {
+						mask = cv::Mat(480, 640, CV_8UC1, cv::Scalar(0));
+						cv::inRange(m_bg16u, userValues[j], userValues[j], mask);
+						m_personBGR.setTo(cv::Scalar(0,0,0), mask);
+					}
+				}
+			}
+
+			// resize and show the image
+			m_personBGR = cv::Mat(m_personBGR, cv::Rect(40,40,600,440));
+			cv::imshow( name, m_personBGR );
+			if(print_frames==1){
+				sprintf( name, "user%d.png", i);
+				cv::imwrite(name, m_personBGR);
+			}
+		}
+		
 		//cv::inRange(m_bg16u, all1, all1, mask);
 
 		//cv::imshow( "person1", mask );
+		print_frames--;
 
 		DrawDepthMap(depthMD, sceneMD);
 
@@ -335,6 +405,18 @@ void glutKeyboard (unsigned char key, int /*x*/, int /*y*/)
 	{
 	case 27:
 		CleanupExit();
+	case '0':
+		// enable shadow peopne
+		print_frames = 200;
+		break;
+	case '1':
+		// enable shadow peopne
+		shadows = (shadows) ? 0 : 1;
+		break;
+	case '2':
+		// enable shadow peopne
+		backgrounds = (backgrounds) ? 0 : 1;
+		break;
 	case 'b':
 		// Draw background?
 		g_bDrawBackground = !g_bDrawBackground;
@@ -378,10 +460,12 @@ void glInit (int * pargc, char ** argv)
 {
 	//cv::Mat temp;
 	//userValues
+
 	for(int i = 0; i < 10; i++) { 
 		cv::Mat temp(480, 640, CV_16UC1, cv::Scalar(i));
 		userValues.push_back(temp);
 	}
+	
 	glutInit(pargc, argv);
 	glutInitDisplayMode(GLUT_RGB | GLUT_DOUBLE | GLUT_DEPTH);
 	glutInitWindowSize(GL_WIN_SIZE_X, GL_WIN_SIZE_Y);
@@ -398,6 +482,11 @@ void glInit (int * pargc, char ** argv)
 
 	glEnableClientState(GL_VERTEX_ARRAY);
 	glDisableClientState(GL_COLOR_ARRAY);
+	//g_DepthGenerator.GetAlternativeViewpointCap().SetAlternativeViewpoint(g_ImageGenerator);
+	g_DepthGenerator.GetAlternativeViewPointCap().SetViewPoint(g_ImageGenerator);
+	g_ImageGenerator.GetMetaData( imageMD );
+	memcpy( m_rgb8u.data, imageMD.Data(), 640*480*3 );
+	cvtColor( m_rgb8u, m_bgBGR_static, CV_RGB2BGR );
 }
 #endif // USE_GLES
 
@@ -412,8 +501,6 @@ void glInit (int * pargc, char ** argv)
 
 int main(int argc, char **argv)
 {
-
-
 
 	XnStatus nRetVal = XN_STATUS_OK;
 
@@ -451,6 +538,7 @@ int main(int argc, char **argv)
 	}
 	printf("here we go\n");
 	nRetVal = g_Context.FindExistingNode(XN_NODE_TYPE_DEPTH, g_DepthGenerator);
+	nRetVal = g_Context.FindExistingNode(XN_NODE_TYPE_IMAGE, g_ImageGenerator);
 	if (nRetVal != XN_STATUS_OK)
 	{
 		printf("No depth generator found. Using a default one...");
@@ -460,10 +548,11 @@ int main(int argc, char **argv)
 
 		// set some defaults
 		XnMapOutputMode defaultMode;
-		defaultMode.nXRes = 320;
-		defaultMode.nYRes = 240;
+		defaultMode.nXRes = 640;
+		defaultMode.nYRes = 480;
 		defaultMode.nFPS = 30;
 		nRetVal = mockDepth.SetMapOutputMode(defaultMode);
+		nRetVal = g_ImageGenerator.SetMapOutputMode(defaultMode);
 		CHECK_RC(nRetVal, "set default mode");
 
 		// set FOV
